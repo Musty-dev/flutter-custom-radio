@@ -5,6 +5,7 @@ import 'dart:developer';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:audioplayers/audioplayers.dart';
+import 'package:aitor_radio/models/radio_station.dart';
 
 void main() {
   runApp(const MyApp());
@@ -22,13 +23,14 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.red),
         useMaterial3: true,
       ),
-      home: const MyHomePage(title: 'Aitor Radio List'),
+      home: const MyHomePage(title: 'Custom Radio Player'),
     );
   }
 }
 
 class MyHomePage extends StatefulWidget {
   const MyHomePage({super.key, required this.title});
+
   final String title;
 
   @override
@@ -38,20 +40,26 @@ class MyHomePage extends StatefulWidget {
 class _MyHomePageState extends State<MyHomePage> {
   final AudioPlayer audioPlayer = AudioPlayer();
   late RadioStation currentRadioStation;
-  TextEditingController _radioSearcher = TextEditingController();
+  bool currentListening = false;
+  final TextEditingController _radioSearcher = TextEditingController();
+  late Future<List<RadioStation>> _radioStationsFuture;
+  List<RadioStation> _filteredRadioStations = [];
 
   @override
   void initState() {
     super.initState();
+    _radioStationsFuture = getRadioStations();
   }
 
   Future<List<RadioStation>> getRadioStations() async {
-    final response = await http.get(Uri.parse('https://de1.api.radio-browser.info/json/stations/bycountrycodeexact/ES'));
+    final response = await http.get(Uri.parse(
+        'https://de1.api.radio-browser.info/json/stations/bycountrycodeexact/ES'));
     if (response.statusCode == 200) {
       List<dynamic> data = jsonDecode(response.body);
       return data.map((station) => RadioStation.fromJson(station)).toList();
     } else {
-      throw Exception('No se han localizado radios, comprueba tu conexión a Internet.');
+      throw Exception(
+          'No se han localizado radios, comprueba tu conexión a Internet.');
     }
   }
 
@@ -75,28 +83,37 @@ class _MyHomePageState extends State<MyHomePage> {
               controller: _radioSearcher,
               decoration: const InputDecoration(
                 hintText: 'Introduce la radio a buscar',
-                labelText: 'Introduce la radio a buscar'
+                labelText: 'Introduce la radio a buscar',
               ),
               onChanged: (value) {
-                setState(() {});
+                setState(() {
+                  _filteredRadioStations = _filterRadioStations(value);
+                });
               },
             ),
           ),
+          currentStationExpositor(),
           Expanded(
             child: FutureBuilder<List<RadioStation>>(
-              future: getRadioStations(),
+              future: _radioStationsFuture,
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
                 } else if (snapshot.hasError) {
                   return Center(child: Text('Error: ${snapshot.error}'));
                 } else {
+                  _filteredRadioStations = snapshot.data!;
+                  bool isGrey = false;
                   return ListView.builder(
                     itemCount: snapshot.data!.length,
                     itemBuilder: (context, index) {
                       final station = snapshot.data![index];
-                      if (_radioSearcher.text.isEmpty || station.name.toLowerCase().contains(_radioSearcher.text)) {
-                        return radioExpositor(station);
+                      isGrey = !isGrey;
+                      if (_radioSearcher.text.isEmpty ||
+                          station.name
+                              .toLowerCase()
+                              .contains(_radioSearcher.text)) {
+                        return radioExpositor(station, isGrey);
                       } else {
                         return const SizedBox.shrink();
                       }
@@ -106,85 +123,66 @@ class _MyHomePageState extends State<MyHomePage> {
               },
             ),
           ),
-          currentStationExpositor()
         ],
       ),
     );
   }
 
-  Widget radioExpositor(RadioStation radioStationToShow) {
+  Widget radioExpositor(RadioStation radioStationToShow, bool isGrey) {
     return Container(
-      decoration: BoxDecoration(
-        border: Border.all(
-          color: Colors.grey,
-          width: 1,
-        ),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Expanded(child: Text(radioStationToShow.name, style: TextStyle(),)),
-          IconButton(
+      decoration:
+          BoxDecoration(color: isGrey ? Colors.grey.shade200 : Colors.white),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            IconButton(
+              onPressed: () async {},
+              icon: const Icon(Icons.star_border),
+            ),
+            Expanded(
+                child: Text(
+              radioStationToShow.name,
+              style: const TextStyle(),
+            )),
+            IconButton(
               onPressed: () async {
-                if(radioStationToShow.name != currentRadioStation.name) {
+                if (currentListening == false ||
+                    radioStationToShow.name != currentRadioStation.name) {
                   setState(() {
                     currentRadioStation = radioStationToShow;
+                    currentListening = true;
                   });
                   await playRadio(radioStationToShow.url);
                 }
               },
               icon: const Icon(Icons.play_circle),
-          )
-        ],
+            )
+          ],
+        ),
       ),
     );
   }
 
-  Widget currentStationExpositor () {
-    if(currentRadioStation != null) {
-
+  Widget currentStationExpositor() {
+    if (currentListening) {
+      return Container(
+        child: Text(
+          "¡Estás escuchando ${currentRadioStation.name}!",
+          style: const TextStyle(fontSize: 18),
+        ),
+      );
+    } else {
+      return const SizedBox.shrink();
     }
-    return Container(
-      child: Text("La radio actual es ${currentRadioStation.name}"),
-    );
   }
-}
 
-
-class RadioStation {
-  final String name;
-  final String url;
-  final String homepage;
-  final String favicon;
-  final String tags;
-  final String country;
-  final String state;
-  final String language;
-  final int votes;
-
-  RadioStation({
-    required this.name,
-    required this.url,
-    required this.homepage,
-    required this.favicon,
-    required this.tags,
-    required this.country,
-    required this.state,
-    required this.language,
-    required this.votes,
-  });
-
-  factory RadioStation.fromJson(Map<String, dynamic> json) {
-    return RadioStation(
-      name: json['name'],
-      url: json['url'],
-      homepage: json['homepage'],
-      favicon: json['favicon'],
-      tags: json['tags'],
-      country: json['country'],
-      state: json['state'],
-      language: json['language'],
-      votes: json['votes'],
-    );
+  List<RadioStation> _filterRadioStations(String searchQuery) {
+    if (searchQuery.isEmpty) {
+      return _filteredRadioStations;
+    } else {
+      return _filteredRadioStations.where((station) => station.name.toLowerCase().contains(searchQuery.toLowerCase())).toList();
+    }
   }
 }
